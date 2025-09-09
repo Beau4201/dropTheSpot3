@@ -325,14 +325,23 @@ async def get_current_user_profile(current_user: User = Depends(get_current_user
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @api_router.post("/spots", response_model=Spot)
-async def create_spot(spot_data: SpotCreate):
-    """Create a new spot"""
+async def create_spot(spot_data: SpotCreate, current_user: User = Depends(get_current_user)):
+    """Create a new spot (requires authentication)"""
     try:
-        spot = Spot(**spot_data.dict())
+        spot = Spot(
+            **spot_data.dict(),
+            user_id=current_user.id,
+            username=current_user.username
+        )
         spot_dict = prepare_for_mongo(spot.dict())
         
         result = await db.spots.insert_one(spot_dict)
         if result.inserted_id:
+            # Update user's spot count
+            await db.users.update_one(
+                {"id": current_user.id},
+                {"$inc": {"spots_count": 1}}
+            )
             return spot
         else:
             raise HTTPException(status_code=500, detail="Failed to create spot")
@@ -341,21 +350,54 @@ async def create_spot(spot_data: SpotCreate):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @api_router.get("/spots", response_model=List[Spot])
-async def get_all_spots():
-    """Get all spots"""
+async def get_spots(
+    filter_type: str = "global",  # global, own, friends
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """Get spots based on filter type"""
     try:
-        spots_data = await db.spots.find().to_list(length=None)
+        query = {}
+        
+        if filter_type == "own" and current_user:
+            query["user_id"] = current_user.id
+        elif filter_type == "friends" and current_user:
+            # Get user's friends and include their spots + own spots
+            friend_ids = current_user.friends + [current_user.id]
+            query["user_id"] = {"$in": friend_ids}
+        # For "global" or when not authenticated, show all public spots
+        else:
+            query["is_public"] = True
+        
+        spots_data = await db.spots.find(query).to_list(length=None)
         spots = []
+        
         for spot_data in spots_data:
             parsed_spot = parse_from_mongo(spot_data)
+            
+            # Calculate average rating for this spot
+            rating_pipeline = [
+                {"$match": {"spot_id": parsed_spot["id"]}},
+                {"$group": {
+                    "_id": None,
+                    "avg_rating": {"$avg": "$rating"},
+                    "count": {"$sum": 1}
+                }}
+            ]
+            rating_result = await db.ratings.aggregate(rating_pipeline).to_list(length=1)
+            
+            if rating_result:
+                parsed_spot["average_rating"] = round(rating_result[0]["avg_rating"] or 0.0, 1)
+                parsed_spot["rating_count"] = rating_result[0]["count"]
+            
             spots.append(Spot(**parsed_spot))
+        
         return spots
     except Exception as e:
         logging.error(f"Error fetching spots: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @api_router.get("/spots/{spot_id}", response_model=Spot)
-async def get_spot(spot_id: str):
+async def get_spot(spot_id: str, current_user: Optional[User] = Depends(get_current_user_optional)):
     """Get a specific spot by ID"""
     try:
         spot_data = await db.spots.find_one({"id": spot_id})
@@ -363,6 +405,22 @@ async def get_spot(spot_id: str):
             raise HTTPException(status_code=404, detail="Spot not found")
         
         parsed_spot = parse_from_mongo(spot_data)
+        
+        # Calculate average rating
+        rating_pipeline = [
+            {"$match": {"spot_id": spot_id}},
+            {"$group": {
+                "_id": None,
+                "avg_rating": {"$avg": "$rating"},
+                "count": {"$sum": 1}
+            }}
+        ]
+        rating_result = await db.ratings.aggregate(rating_pipeline).to_list(length=1)
+        
+        if rating_result:
+            parsed_spot["average_rating"] = round(rating_result[0]["avg_rating"] or 0.0, 1)
+            parsed_spot["rating_count"] = rating_result[0]["count"]
+        
         return Spot(**parsed_spot)
     except HTTPException:
         raise
@@ -371,17 +429,94 @@ async def get_spot(spot_id: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @api_router.delete("/spots/{spot_id}")
-async def delete_spot(spot_id: str):
-    """Delete a spot"""
+async def delete_spot(spot_id: str, current_user: User = Depends(get_current_user)):
+    """Delete a spot (only by owner)"""
     try:
+        # Check if spot exists and belongs to current user
+        spot_data = await db.spots.find_one({"id": spot_id})
+        if not spot_data:
+            raise HTTPException(status_code=404, detail="Spot not found")
+        
+        if spot_data["user_id"] != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to delete this spot")
+        
+        # Delete the spot
         result = await db.spots.delete_one({"id": spot_id})
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Spot not found")
+        
+        # Delete all ratings for this spot
+        await db.ratings.delete_many({"spot_id": spot_id})
+        
+        # Update user's spot count
+        await db.users.update_one(
+            {"id": current_user.id},
+            {"$inc": {"spots_count": -1}}
+        )
+        
         return {"message": "Spot deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Error deleting spot {spot_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+# Rating Routes
+@api_router.post("/spots/{spot_id}/rate")
+async def rate_spot(spot_id: str, rating_data: SpotRating, current_user: User = Depends(get_current_user)):
+    """Rate a spot"""
+    try:
+        # Check if spot exists
+        spot_data = await db.spots.find_one({"id": spot_id})
+        if not spot_data:
+            raise HTTPException(status_code=404, detail="Spot not found")
+        
+        # Check if user already rated this spot
+        existing_rating = await db.ratings.find_one({
+            "user_id": current_user.id,
+            "spot_id": spot_id
+        })
+        
+        rating_doc = {
+            "user_id": current_user.id,
+            "spot_id": spot_id,
+            "rating": rating_data.rating,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        if existing_rating:
+            # Update existing rating
+            await db.ratings.update_one(
+                {"user_id": current_user.id, "spot_id": spot_id},
+                {"$set": rating_doc}
+            )
+        else:
+            # Create new rating
+            rating_doc["id"] = str(uuid.uuid4())
+            await db.ratings.insert_one(rating_doc)
+        
+        return {"message": "Rating submitted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error rating spot: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.get("/spots/{spot_id}/my-rating")
+async def get_my_rating(spot_id: str, current_user: User = Depends(get_current_user)):
+    """Get current user's rating for a spot"""
+    try:
+        rating_data = await db.ratings.find_one({
+            "user_id": current_user.id,
+            "spot_id": spot_id
+        })
+        
+        if rating_data:
+            return {"rating": rating_data["rating"]}
+        else:
+            return {"rating": None}
+    except Exception as e:
+        logging.error(f"Error getting user rating: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # Include the router in the main app
