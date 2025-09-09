@@ -186,6 +186,144 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
 async def root():
     return {"message": "Drop the Spot API"}
 
+# Authentication Routes
+@api_router.post("/auth/register", response_model=Token)
+async def register(user_data: UserCreate):
+    """Register a new user"""
+    try:
+        # Check if username or email already exists
+        existing_user = await db.users.find_one({
+            "$or": [{"username": user_data.username}, {"email": user_data.email}]
+        })
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Username or email already registered")
+        
+        # Create new user
+        hashed_password = hash_password(user_data.password)
+        user = User(
+            username=user_data.username,
+            email=user_data.email
+        )
+        
+        user_dict = prepare_for_mongo(user.dict())
+        user_dict["password"] = hashed_password
+        
+        result = await db.users.insert_one(user_dict)
+        if not result.inserted_id:
+            raise HTTPException(status_code=500, detail="Failed to create user")
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": user.id})
+        
+        # Return user profile
+        user_profile = UserProfile(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            created_at=user.created_at,
+            spots_count=0
+        )
+        
+        return Token(access_token=access_token, token_type="bearer", user=user_profile)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error registering user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.post("/auth/login", response_model=Token)
+async def login(user_credentials: UserLogin):
+    """Login user"""
+    try:
+        # Find user by username
+        user_data = await db.users.find_one({"username": user_credentials.username})
+        if not user_data or not verify_password(user_credentials.password, user_data["password"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password"
+            )
+        
+        parsed_user = parse_from_mongo(user_data)
+        user = User(**parsed_user)
+        
+        # Get user stats
+        spots_count = await db.spots.count_documents({"user_id": user.id})
+        friends_count = len(user.friends)
+        
+        # Calculate average rating for user's spots
+        pipeline = [
+            {"$match": {"spot_id": {"$in": []}}},  # Will be filled with user's spot IDs
+            {"$group": {"_id": None, "avg_rating": {"$avg": "$rating"}}}
+        ]
+        
+        user_spots = await db.spots.find({"user_id": user.id}).to_list(length=None)
+        spot_ids = [spot["id"] for spot in user_spots]
+        
+        avg_rating = 0.0
+        if spot_ids:
+            pipeline[0]["$match"]["spot_id"]["$in"] = spot_ids
+            rating_result = await db.ratings.aggregate(pipeline).to_list(length=1)
+            if rating_result:
+                avg_rating = rating_result[0]["avg_rating"] or 0.0
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": user.id})
+        
+        # Return user profile
+        user_profile = UserProfile(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            created_at=user.created_at,
+            spots_count=spots_count,
+            friends_count=friends_count,
+            average_rating=round(avg_rating, 1)
+        )
+        
+        return Token(access_token=access_token, token_type="bearer", user=user_profile)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error logging in user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.get("/auth/me", response_model=UserProfile)
+async def get_current_user_profile(current_user: User = Depends(get_current_user)):
+    """Get current user profile"""
+    try:
+        # Get updated stats
+        spots_count = await db.spots.count_documents({"user_id": current_user.id})
+        friends_count = len(current_user.friends)
+        
+        # Calculate average rating
+        user_spots = await db.spots.find({"user_id": current_user.id}).to_list(length=None)
+        spot_ids = [spot["id"] for spot in user_spots]
+        
+        avg_rating = 0.0
+        if spot_ids:
+            pipeline = [
+                {"$match": {"spot_id": {"$in": spot_ids}}},
+                {"$group": {"_id": None, "avg_rating": {"$avg": "$rating"}}}
+            ]
+            rating_result = await db.ratings.aggregate(pipeline).to_list(length=1)
+            if rating_result:
+                avg_rating = rating_result[0]["avg_rating"] or 0.0
+        
+        return UserProfile(
+            id=current_user.id,
+            username=current_user.username,
+            email=current_user.email,
+            created_at=current_user.created_at,
+            spots_count=spots_count,
+            friends_count=friends_count,
+            average_rating=round(avg_rating, 1)
+        )
+    except Exception as e:
+        logging.error(f"Error getting user profile: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @api_router.post("/spots", response_model=Spot)
 async def create_spot(spot_data: SpotCreate):
     """Create a new spot"""
