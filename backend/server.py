@@ -519,6 +519,205 @@ async def get_my_rating(spot_id: str, current_user: User = Depends(get_current_u
         logging.error(f"Error getting user rating: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# Friends Routes
+@api_router.post("/friends/request/{user_id}")
+async def send_friend_request(user_id: str, current_user: User = Depends(get_current_user)):
+    """Send a friend request"""
+    try:
+        if user_id == current_user.id:
+            raise HTTPException(status_code=400, detail="Cannot send friend request to yourself")
+        
+        # Check if target user exists
+        target_user = await db.users.find_one({"id": user_id})
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check if already friends
+        if user_id in current_user.friends:
+            raise HTTPException(status_code=400, detail="Already friends with this user")
+        
+        # Check if request already exists
+        existing_request = await db.friend_requests.find_one({
+            "from_user_id": current_user.id,
+            "to_user_id": user_id,
+            "status": "pending"
+        })
+        if existing_request:
+            raise HTTPException(status_code=400, detail="Friend request already sent")
+        
+        # Create friend request
+        friend_request = FriendRequest(
+            from_user_id=current_user.id,
+            to_user_id=user_id
+        )
+        request_dict = prepare_for_mongo(friend_request.dict())
+        await db.friend_requests.insert_one(request_dict)
+        
+        return {"message": "Friend request sent successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error sending friend request: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.post("/friends/accept/{request_id}")
+async def accept_friend_request(request_id: str, current_user: User = Depends(get_current_user)):
+    """Accept a friend request"""
+    try:
+        # Find the friend request
+        request_data = await db.friend_requests.find_one({
+            "id": request_id,
+            "to_user_id": current_user.id,
+            "status": "pending"
+        })
+        if not request_data:
+            raise HTTPException(status_code=404, detail="Friend request not found")
+        
+        from_user_id = request_data["from_user_id"]
+        
+        # Update friend request status
+        await db.friend_requests.update_one(
+            {"id": request_id},
+            {"$set": {"status": "accepted"}}
+        )
+        
+        # Add each user to the other's friends list
+        await db.users.update_one(
+            {"id": current_user.id},
+            {"$addToSet": {"friends": from_user_id}}
+        )
+        await db.users.update_one(
+            {"id": from_user_id},
+            {"$addToSet": {"friends": current_user.id}}
+        )
+        
+        return {"message": "Friend request accepted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error accepting friend request: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.get("/friends/requests")
+async def get_friend_requests(current_user: User = Depends(get_current_user)):
+    """Get pending friend requests for current user"""
+    try:
+        requests_data = await db.friend_requests.find({
+            "to_user_id": current_user.id,
+            "status": "pending"
+        }).to_list(length=None)
+        
+        requests_with_users = []
+        for request_data in requests_data:
+            # Get sender info
+            sender_data = await db.users.find_one({"id": request_data["from_user_id"]})
+            if sender_data:
+                requests_with_users.append({
+                    "id": request_data["id"],
+                    "from_user": {
+                        "id": sender_data["id"],
+                        "username": sender_data["username"]
+                    },
+                    "created_at": request_data["created_at"]
+                })
+        
+        return requests_with_users
+    except Exception as e:
+        logging.error(f"Error getting friend requests: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.get("/friends")
+async def get_friends(current_user: User = Depends(get_current_user)):
+    """Get current user's friends list"""
+    try:
+        friends_data = await db.users.find({
+            "id": {"$in": current_user.friends}
+        }).to_list(length=None)
+        
+        friends_list = []
+        for friend_data in friends_data:
+            friends_list.append({
+                "id": friend_data["id"],
+                "username": friend_data["username"],
+                "spots_count": friend_data.get("spots_count", 0)
+            })
+        
+        return friends_list
+    except Exception as e:
+        logging.error(f"Error getting friends: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.get("/users/search")
+async def search_users(q: str, current_user: User = Depends(get_current_user)):
+    """Search for users by username"""
+    try:
+        if len(q) < 2:
+            return []
+        
+        users_data = await db.users.find({
+            "username": {"$regex": f".*{q}.*", "$options": "i"},
+            "id": {"$ne": current_user.id}  # Exclude current user
+        }).to_list(length=10)
+        
+        users_list = []
+        for user_data in users_data:
+            is_friend = user_data["id"] in current_user.friends
+            users_list.append({
+                "id": user_data["id"],
+                "username": user_data["username"],
+                "spots_count": user_data.get("spots_count", 0),
+                "is_friend": is_friend
+            })
+        
+        return users_list
+    except Exception as e:
+        logging.error(f"Error searching users: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+# Groups Routes (Basic implementation)
+@api_router.post("/groups", response_model=Group)
+async def create_group(group_data: GroupCreate, current_user: User = Depends(get_current_user)):
+    """Create a new group"""
+    try:
+        group = Group(
+            **group_data.dict(),
+            creator_id=current_user.id,
+            members=[current_user.id]
+        )
+        group_dict = prepare_for_mongo(group.dict())
+        
+        result = await db.groups.insert_one(group_dict)
+        if result.inserted_id:
+            # Add group to user's groups list
+            await db.users.update_one(
+                {"id": current_user.id},
+                {"$addToSet": {"groups": group.id}}
+            )
+            return group
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create group")
+    except Exception as e:
+        logging.error(f"Error creating group: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@api_router.get("/groups")
+async def get_user_groups(current_user: User = Depends(get_current_user)):
+    """Get groups the current user is member of"""
+    try:
+        groups_data = await db.groups.find({
+            "members": current_user.id
+        }).to_list(length=None)
+        
+        groups_list = []
+        for group_data in groups_data:
+            parsed_group = parse_from_mongo(group_data)
+            groups_list.append(Group(**parsed_group))
+        
+        return groups_list
+    except Exception as e:
+        logging.error(f"Error getting user groups: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 # Include the router in the main app
 app.include_router(api_router)
 
