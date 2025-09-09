@@ -36,13 +36,51 @@ app = FastAPI()
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Spot Models
+# User Models
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class User(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    username: str
+    email: EmailStr
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    spots_count: int = Field(default=0)
+    friends: List[str] = Field(default_factory=list)  # List of user IDs
+    groups: List[str] = Field(default_factory=list)   # List of group IDs
+
+class UserProfile(BaseModel):
+    id: str
+    username: str
+    email: EmailStr
+    created_at: datetime
+    spots_count: int
+    friends_count: int = 0
+    average_rating: float = 0.0
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserProfile
+
+# Enhanced Spot Models
 class SpotCreate(BaseModel):
     title: str
     description: str
     photo: str  # base64 encoded image
     latitude: float
     longitude: float
+
+class SpotRating(BaseModel):
+    user_id: str
+    spot_id: str
+    rating: int = Field(ge=1, le=5)  # 1-5 stars
 
 class Spot(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -51,6 +89,34 @@ class Spot(BaseModel):
     photo: str
     latitude: float
     longitude: float
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    user_id: str
+    username: str
+    average_rating: float = Field(default=0.0)
+    rating_count: int = Field(default=0)
+    is_public: bool = Field(default=True)
+
+# Group Models
+class GroupCreate(BaseModel):
+    name: str
+    description: str
+    is_private: bool = Field(default=False)
+
+class Group(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    creator_id: str
+    members: List[str] = Field(default_factory=list)  # List of user IDs
+    is_private: bool = Field(default=False)
+
+# Friend Request Models
+class FriendRequest(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    from_user_id: str
+    to_user_id: str
+    status: str = Field(default="pending")  # pending, accepted, rejected
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # Helper functions for MongoDB serialization
