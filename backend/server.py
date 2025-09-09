@@ -352,10 +352,17 @@ async def create_spot(spot_data: SpotCreate, current_user: User = Depends(get_cu
 @api_router.get("/spots", response_model=List[Spot])
 async def get_spots(
     filter_type: str = "global",  # global, own, friends
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
     """Get spots based on filter type"""
     try:
+        current_user = None
+        if credentials:
+            try:
+                current_user = await get_current_user(credentials)
+            except HTTPException:
+                pass  # Continue without authentication for public access
+        
         query = {}
         
         if filter_type == "own" and current_user:
