@@ -174,9 +174,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Get current user but don't fail if not authenticated (for public endpoints)"""
-    if not credentials:
-        return None
     try:
+        if not credentials:
+            return None
         return await get_current_user(credentials)
     except HTTPException:
         return None
