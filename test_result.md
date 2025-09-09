@@ -197,9 +197,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Add spot form with photo upload"
-    - "Display spots as map markers"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
