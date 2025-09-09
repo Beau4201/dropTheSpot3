@@ -73,7 +73,7 @@ class Token(BaseModel):
 class SpotCreate(BaseModel):
     title: str
     description: str
-    photo: str  # base64 encoded image
+    photo: Optional[str] = None  # base64 encoded image - now optional
     latitude: float
     longitude: float
 
