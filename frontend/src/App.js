@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import toast, { Toaster } from 'react-hot-toast';
 import './App.css';
 
 // Fix for default markers in Leaflet with React
@@ -26,211 +25,19 @@ const redIcon = new L.Icon({
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Auth Context
-const AuthContext = createContext();
-
-const AuthProvider = ({ children }) => {
+function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token'));
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      fetchUserProfile();
-    } else {
-      setLoading(false);
-    }
-  }, [token]);
-
-  const fetchUserProfile = async () => {
-    try {
-      const response = await axios.get(`${API}/auth/me`);
-      setUser(response.data);
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      logout();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const login = async (username, password) => {
-    try {
-      const response = await axios.post(`${API}/auth/login`, { username, password });
-      const { access_token, user: userData } = response.data;
-      
-      localStorage.setItem('token', access_token);
-      setToken(access_token);
-      setUser(userData);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-      
-      toast.success(`Welcome back, ${userData.username}!`);
-      return true;
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Login failed');
-      return false;
-    }
-  };
-
-  const register = async (username, email, password) => {
-    try {
-      const response = await axios.post(`${API}/auth/register`, { username, email, password });
-      const { access_token, user: userData } = response.data;
-      
-      localStorage.setItem('token', access_token);
-      setToken(access_token);
-      setUser(userData);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-      
-      toast.success(`Welcome to Drop the Spot, ${userData.username}!`);
-      return true;
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Registration failed');
-      return false;
-    }
-  };
-
-  const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
-    setUser(null);
-    delete axios.defaults.headers.common['Authorization'];
-    toast.success('Logged out successfully');
-  };
-
-  return (
-    <AuthContext.Provider value={{ user, login, register, logout, loading }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
-
-const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
-  return context;
-};
-
-// Auth Components
-const AuthModal = ({ isOpen, onClose, mode, onSwitchMode }) => {
-  const [formData, setFormData] = useState({ username: '', email: '', password: '' });
-  const [loading, setLoading] = useState(false);
-  const { login, register } = useAuth();
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    
-    let success;
-    if (mode === 'login') {
-      success = await login(formData.username, formData.password);
-    } else {
-      success = await register(formData.username, formData.email, formData.password);
-    }
-    
-    setLoading(false);
-    if (success) {
-      onClose();
-      setFormData({ username: '', email: '', password: '' });
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal auth-modal">
-        <div className="modal-header">
-          <h2>{mode === 'login' ? 'Login' : 'Create Account'}</h2>
-          <button onClick={onClose} className="close-btn">×</button>
-        </div>
-        
-        <form onSubmit={handleSubmit} className="auth-form">
-          <div className="form-group">
-            <label>Username</label>
-            <input
-              type="text"
-              value={formData.username}
-              onChange={(e) => setFormData(prev => ({ ...prev, username: e.target.value }))}
-              required
-            />
-          </div>
-          
-          {mode === 'register' && (
-            <div className="form-group">
-              <label>Email</label>
-              <input
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                required
-              />
-            </div>
-          )}
-          
-          <div className="form-group">
-            <label>Password</label>
-            <input
-              type="password"
-              value={formData.password}
-              onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
-              required
-            />
-          </div>
-          
-          <button type="submit" className="submit-btn" disabled={loading}>
-            {loading ? 'Processing...' : (mode === 'login' ? 'Login' : 'Create Account')}
-          </button>
-          
-          <p className="auth-switch">
-            {mode === 'login' ? "Don't have an account? " : "Already have an account? "}
-            <button type="button" onClick={onSwitchMode} className="link-btn">
-              {mode === 'login' ? 'Sign up' : 'Log in'}
-            </button>
-          </p>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-// Star Rating Component
-const StarRating = ({ rating, onRate, readOnly = false }) => {
-  const [hover, setHover] = useState(0);
-
-  return (
-    <div className="star-rating">
-      {[...Array(5)].map((_, index) => {
-        const starValue = index + 1;
-        return (
-          <button
-            key={index}
-            type="button"
-            className={`star ${starValue <= (hover || rating) ? 'active' : ''}`}
-            onClick={() => !readOnly && onRate && onRate(starValue)}
-            onMouseEnter={() => !readOnly && setHover(starValue)}
-            onMouseLeave={() => !readOnly && setHover(0)}
-            disabled={readOnly}
-          >
-            ★
-          </button>
-        );
-      })}
-      {rating > 0 && <span className="rating-text">({rating.toFixed(1)})</span>}
-    </div>
-  );
-};
-
-function App() {
-  const { user, loading, logout } = useAuth();
   const [spots, setSpots] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedSpot, setSelectedSpot] = useState(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState('login');
+  const [showFriendsModal, setShowFriendsModal] = useState(false);
+  const [friends, setFriends] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [mapFilter, setMapFilter] = useState('global');
   const [newSpot, setNewSpot] = useState({
     title: '',
@@ -241,22 +48,38 @@ function App() {
   });
   const [currentLocation, setCurrentLocation] = useState(null);
   const [locationLoading, setLocationLoading] = useState(false);
+  const [authForm, setAuthForm] = useState({ username: '', email: '', password: '' });
+  const [loading, setLoading] = useState(false);
   
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
   const addSpotMarkerRef = useRef(null);
 
+  // Initialize authentication
+  useEffect(() => {
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      fetchUserProfile();
+    }
+  }, [token]);
+
   // Initialize map
   useEffect(() => {
     if (mapRef.current && !mapInstanceRef.current) {
-      mapInstanceRef.current = L.map(mapRef.current).setView([52.3676, 4.9041], 13);
-      
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(mapInstanceRef.current);
+      try {
+        mapInstanceRef.current = L.map(mapRef.current).setView([52.3676, 4.9041], 13);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors'
+        }).addTo(mapInstanceRef.current);
 
-      getCurrentLocation();
+        console.log('Map initialized successfully');
+        getCurrentLocation();
+        loadSpots();
+      } catch (error) {
+        console.error('Error initializing map:', error);
+      }
     }
 
     return () => {
@@ -267,19 +90,32 @@ function App() {
     };
   }, []);
 
-  // Load spots when map is ready or filter changes
+  // Update markers when spots change
+  useEffect(() => {
+    if (mapInstanceRef.current && spots.length >= 0) {
+      updateMapMarkers();
+    }
+  }, [spots]);
+
+  // Load spots when filter changes
   useEffect(() => {
     if (mapInstanceRef.current) {
       loadSpots();
     }
-  }, [mapInstanceRef.current, mapFilter, user]);
+  }, [mapFilter, user]);
 
-  // Update markers when spots change
-  useEffect(() => {
-    if (mapInstanceRef.current) {
-      updateMapMarkers();
+  const fetchUserProfile = async () => {
+    try {
+      const response = await axios.get(`${API}/auth/me`);
+      setUser(response.data);
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      localStorage.removeItem('token');
+      setToken(null);
+      setUser(null);
+      delete axios.defaults.headers.common['Authorization'];
     }
-  }, [spots]);
+  };
 
   const getCurrentLocation = () => {
     setLocationLoading(true);
@@ -292,14 +128,17 @@ function App() {
             mapInstanceRef.current.setView([latitude, longitude], 15);
           }
           setLocationLoading(false);
+          console.log('Location found:', { latitude, longitude });
         },
         (error) => {
           console.error('Error getting location:', error);
           setLocationLoading(false);
+          alert('Could not get your location. Please enable location services.');
         }
       );
     } else {
       setLocationLoading(false);
+      alert('Geolocation is not supported by this browser.');
     }
   };
 
@@ -316,10 +155,9 @@ function App() {
         addSpotMarkerRef.current.setLatLng([currentLocation.latitude, currentLocation.longitude]);
         mapInstanceRef.current.setView([currentLocation.latitude, currentLocation.longitude], 16);
       }
-      toast.success('Location updated to your current position!');
+      alert('Location updated to your current position!');
     } else {
       getCurrentLocation();
-      toast.loading('Getting your location...');
     }
   };
 
@@ -327,40 +165,109 @@ function App() {
     try {
       const response = await axios.get(`${API}/spots?filter_type=${mapFilter}`);
       setSpots(response.data);
+      console.log('Loaded spots:', response.data.length);
     } catch (error) {
       console.error('Error loading spots:', error);
-      if (error.response?.status === 401) {
-        toast.error('Please log in to view filtered spots');
-      }
+      setSpots([]);
     }
   };
 
   const updateMapMarkers = () => {
+    if (!mapInstanceRef.current) return;
+    
     // Clear existing markers
-    markersRef.current.forEach(marker => mapInstanceRef.current.removeLayer(marker));
+    markersRef.current.forEach(marker => {
+      try {
+        mapInstanceRef.current.removeLayer(marker);
+      } catch (e) {
+        console.error('Error removing marker:', e);
+      }
+    });
     markersRef.current = [];
 
     // Add markers for each spot
     spots.forEach(spot => {
-      const popupContent = `
-        <div class="popup-content">
-          ${spot.photo ? `<img src="${spot.photo}" alt="${spot.title}" class="popup-image" />` : ''}
-          <h3 class="popup-title">${spot.title}</h3>
-          <p class="popup-description">${spot.description}</p>
-          <div class="popup-meta">
-            <p><strong>By:</strong> ${spot.username}</p>
-            ${spot.average_rating > 0 ? `<div class="popup-rating">Rating: ${'★'.repeat(Math.round(spot.average_rating))} (${spot.average_rating})</div>` : ''}
+      try {
+        const popupContent = `
+          <div class="popup-content">
+            ${spot.photo ? `<img src="${spot.photo}" alt="${spot.title}" class="popup-image" />` : ''}
+            <h3 class="popup-title">${spot.title}</h3>
+            <p class="popup-description">${spot.description}</p>
+            <div class="popup-meta">
+              <p><strong>By:</strong> ${spot.username || 'Anonymous'}</p>
+              ${spot.average_rating > 0 ? `<div class="popup-rating">Rating: ${'★'.repeat(Math.round(spot.average_rating))} (${spot.average_rating})</div>` : ''}
+            </div>
           </div>
-        </div>
-      `;
-      
-      const marker = L.marker([spot.latitude, spot.longitude])
-        .addTo(mapInstanceRef.current)
-        .bindPopup(popupContent)
-        .on('click', () => setSelectedSpot(spot));
-      
-      markersRef.current.push(marker);
+        `;
+        
+        const marker = L.marker([spot.latitude, spot.longitude])
+          .addTo(mapInstanceRef.current)
+          .bindPopup(popupContent)
+          .on('click', () => setSelectedSpot(spot));
+        
+        markersRef.current.push(marker);
+      } catch (error) {
+        console.error('Error adding marker for spot:', spot.title, error);
+      }
     });
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API}/auth/login`, {
+        username: authForm.username,
+        password: authForm.password
+      });
+      
+      const { access_token, user: userData } = response.data;
+      localStorage.setItem('token', access_token);
+      setToken(access_token);
+      setUser(userData);
+      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      
+      setShowAuthModal(false);
+      setAuthForm({ username: '', email: '', password: '' });
+      alert(`Welcome back, ${userData.username}!`);
+    } catch (error) {
+      console.error('Login error:', error);
+      alert(error.response?.data?.detail || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API}/auth/register`, authForm);
+      
+      const { access_token, user: userData } = response.data;
+      localStorage.setItem('token', access_token);
+      setToken(access_token);
+      setUser(userData);
+      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      
+      setShowAuthModal(false);
+      setAuthForm({ username: '', email: '', password: '' });
+      alert(`Welcome to Drop the Spot, ${userData.username}!`);
+    } catch (error) {
+      console.error('Registration error:', error);
+      alert(error.response?.data?.detail || 'Registration failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+    setUser(null);
+    delete axios.defaults.headers.common['Authorization'];
+    setMapFilter('global');
+    alert('Logged out successfully');
   };
 
   const handleAddSpotClick = () => {
@@ -394,7 +301,7 @@ function App() {
 
   const handleCancelAdd = () => {
     setShowAddForm(false);
-    if (addSpotMarkerRef.current) {
+    if (addSpotMarkerRef.current && mapInstanceRef.current) {
       mapInstanceRef.current.removeLayer(addSpotMarkerRef.current);
       addSpotMarkerRef.current = null;
     }
@@ -414,7 +321,7 @@ function App() {
   const handleSubmitSpot = async (e) => {
     e.preventDefault();
     if (!newSpot.title || !newSpot.description) {
-      toast.error('Please fill in title and description');
+      alert('Please fill in title and description');
       return;
     }
 
@@ -429,16 +336,16 @@ function App() {
       });
       setShowAddForm(false);
       
-      if (addSpotMarkerRef.current) {
+      if (addSpotMarkerRef.current && mapInstanceRef.current) {
         mapInstanceRef.current.removeLayer(addSpotMarkerRef.current);
         addSpotMarkerRef.current = null;
       }
       
-      toast.success('Spot added successfully!');
+      alert('Spot added successfully!');
       loadSpots();
     } catch (error) {
       console.error('Error creating spot:', error);
-      toast.error('Error creating spot. Please try again.');
+      alert('Error creating spot. Please try again.');
     }
   };
 
@@ -450,28 +357,76 @@ function App() {
     
     try {
       await axios.post(`${API}/spots/${spotId}/rate`, { rating });
-      toast.success('Rating submitted!');
-      loadSpots(); // Reload to get updated ratings
+      alert('Rating submitted!');
+      loadSpots();
       setSelectedSpot(null);
     } catch (error) {
       console.error('Error rating spot:', error);
-      toast.error('Error submitting rating');
+      alert('Error submitting rating');
     }
   };
 
-  if (loading) {
-    return (
-      <div className="loading-screen">
-        <div className="loading-spinner"></div>
-        <p>Loading Drop the Spot...</p>
-      </div>
-    );
-  }
+  // Friends functionality
+  const loadFriends = async () => {
+    if (!user) return;
+    try {
+      const [friendsRes, requestsRes] = await Promise.all([
+        axios.get(`${API}/friends`),
+        axios.get(`${API}/friends/requests`)
+      ]);
+      setFriends(friendsRes.data);
+      setFriendRequests(requestsRes.data);
+    } catch (error) {
+      console.error('Error loading friends:', error);
+    }
+  };
+
+  const searchUsers = async (query) => {
+    if (!query || query.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      const response = await axios.get(`${API}/users/search?q=${query}`);
+      setSearchResults(response.data);
+    } catch (error) {
+      console.error('Error searching users:', error);
+    }
+  };
+
+  const sendFriendRequest = async (userId) => {
+    try {
+      await axios.post(`${API}/friends/request/${userId}`);
+      alert('Friend request sent!');
+      searchUsers(searchQuery); // Refresh search results
+    } catch (error) {
+      console.error('Error sending friend request:', error);
+      alert(error.response?.data?.detail || 'Error sending friend request');
+    }
+  };
+
+  const acceptFriendRequest = async (requestId) => {
+    try {
+      await axios.post(`${API}/friends/accept/${requestId}`);
+      alert('Friend request accepted!');
+      loadFriends();
+    } catch (error) {
+      console.error('Error accepting friend request:', error);
+      alert('Error accepting friend request');
+    }
+  };
+
+  const handleOpenFriends = () => {
+    if (!user) {
+      setShowAuthModal(true);
+      return;
+    }
+    setShowFriendsModal(true);
+    loadFriends();
+  };
 
   return (
     <div className="app">
-      <Toaster position="top-right" />
-      
       {/* Header */}
       <header className="header">
         <div className="header-content">
@@ -512,13 +467,16 @@ function App() {
                   <span className="username">👋 {user.username}</span>
                   <div className="user-stats">
                     <span>{user.spots_count} spots</span>
-                    {user.average_rating > 0 && <span>⭐ {user.average_rating}</span>}
+                    <span>{user.friends_count || 0} friends</span>
                   </div>
                 </div>
+                <button onClick={handleOpenFriends} className="friends-btn">
+                  👥 Friends
+                </button>
                 <button onClick={handleAddSpotClick} className="add-spot-btn">
                   + Add Spot
                 </button>
-                <button onClick={logout} className="logout-btn">
+                <button onClick={handleLogout} className="logout-btn">
                   Logout
                 </button>
               </div>
@@ -548,8 +506,8 @@ function App() {
 
       {/* Add Spot Form Modal */}
       {showAddForm && (
-        <div className="modal-overlay">
-          <div className="modal">
+        <div className="modal-overlay" onClick={handleCancelAdd}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Add New Spot</h2>
               <button onClick={handleCancelAdd} className="close-btn">×</button>
@@ -601,8 +559,9 @@ function App() {
                     type="button" 
                     onClick={useMyLocation} 
                     className="location-btn"
+                    disabled={locationLoading}
                   >
-                    📍 Use My Location
+                    📍 {locationLoading ? 'Getting Location...' : 'Use My Location'}
                   </button>
                   <p className="location-info">
                     Drag the red marker on the map to set the exact location
@@ -625,10 +584,103 @@ function App() {
         </div>
       )}
 
+      {/* Friends Modal */}
+      {showFriendsModal && (
+        <div className="modal-overlay" onClick={() => setShowFriendsModal(false)}>
+          <div className="modal large-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Friends & Social</h2>
+              <button onClick={() => setShowFriendsModal(false)} className="close-btn">×</button>
+            </div>
+            
+            <div className="friends-content">
+              {/* Search Users */}
+              <div className="friends-section">
+                <h3>Find Friends</h3>
+                <div className="search-container">
+                  <input
+                    type="text"
+                    placeholder="Search users by username..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      searchUsers(e.target.value);
+                    }}
+                    className="search-input"
+                  />
+                </div>
+                <div className="search-results">
+                  {searchResults.map(user => (
+                    <div key={user.id} className="user-item">
+                      <div className="user-info">
+                        <span className="username">{user.username}</span>
+                        <span className="user-stats">{user.spots_count} spots</span>
+                      </div>
+                      {!user.is_friend && (
+                        <button 
+                          onClick={() => sendFriendRequest(user.id)}
+                          className="friend-action-btn"
+                        >
+                          Add Friend
+                        </button>
+                      )}
+                      {user.is_friend && (
+                        <span className="friend-status">✅ Friends</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Friend Requests */}
+              {friendRequests.length > 0 && (
+                <div className="friends-section">
+                  <h3>Friend Requests ({friendRequests.length})</h3>
+                  {friendRequests.map(request => (
+                    <div key={request.id} className="user-item">
+                      <div className="user-info">
+                        <span className="username">{request.from_user.username}</span>
+                        <span className="request-date">
+                          {new Date(request.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <button 
+                        onClick={() => acceptFriendRequest(request.id)}
+                        className="friend-action-btn accept"
+                      >
+                        Accept
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Friends List */}
+              <div className="friends-section">
+                <h3>Your Friends ({friends.length})</h3>
+                {friends.length === 0 ? (
+                  <p className="no-friends">No friends yet. Search and add some friends above!</p>
+                ) : (
+                  friends.map(friend => (
+                    <div key={friend.id} className="user-item">
+                      <div className="user-info">
+                        <span className="username">{friend.username}</span>
+                        <span className="user-stats">{friend.spots_count} spots</span>
+                      </div>
+                      <span className="friend-status">✅ Friends</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Spot Details Modal */}
-      {selectedSpot && !showAddForm && (
-        <div className="modal-overlay">
-          <div className="modal">
+      {selectedSpot && (
+        <div className="modal-overlay" onClick={() => setSelectedSpot(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{selectedSpot.title}</h2>
               <button onClick={() => setSelectedSpot(null)} className="close-btn">×</button>
@@ -640,20 +692,31 @@ function App() {
               )}
               <p className="spot-description">{selectedSpot.description}</p>
               
-              <div className="spot-rating-section">
-                <h3>Rate this spot:</h3>
-                <StarRating 
-                  rating={selectedSpot.average_rating} 
-                  onRate={(rating) => handleRateSpot(selectedSpot.id, rating)}
-                  readOnly={!user}
-                />
-                {selectedSpot.rating_count > 0 && (
-                  <p className="rating-count">{selectedSpot.rating_count} rating{selectedSpot.rating_count !== 1 ? 's' : ''}</p>
-                )}
-              </div>
+              {user && (
+                <div className="spot-rating-section">
+                  <h3>Rate this spot:</h3>
+                  <div className="star-rating">
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <button
+                        key={star}
+                        className={`star ${star <= Math.round(selectedSpot.average_rating) ? 'active' : ''}`}
+                        onClick={() => handleRateSpot(selectedSpot.id, star)}
+                      >
+                        ★
+                      </button>
+                    ))}
+                    {selectedSpot.average_rating > 0 && (
+                      <span className="rating-text">({selectedSpot.average_rating})</span>
+                    )}
+                  </div>
+                  {selectedSpot.rating_count > 0 && (
+                    <p className="rating-count">{selectedSpot.rating_count} rating{selectedSpot.rating_count !== 1 ? 's' : ''}</p>
+                  )}
+                </div>
+              )}
               
               <div className="spot-meta">
-                <p><strong>Added by:</strong> {selectedSpot.username}</p>
+                <p><strong>Added by:</strong> {selectedSpot.username || 'Anonymous'}</p>
                 <p><strong>Date:</strong> {new Date(selectedSpot.created_at).toLocaleDateString()}</p>
                 <p><strong>Location:</strong> {selectedSpot.latitude.toFixed(6)}, {selectedSpot.longitude.toFixed(6)}</p>
               </div>
@@ -663,12 +726,65 @@ function App() {
       )}
 
       {/* Auth Modal */}
-      <AuthModal 
-        isOpen={showAuthModal}
-        onClose={() => setShowAuthModal(false)}
-        mode={authMode}
-        onSwitchMode={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-      />
+      {showAuthModal && (
+        <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
+          <div className="modal auth-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{authMode === 'login' ? 'Login' : 'Create Account'}</h2>
+              <button onClick={() => setShowAuthModal(false)} className="close-btn">×</button>
+            </div>
+            
+            <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="auth-form">
+              <div className="form-group">
+                <label>Username</label>
+                <input
+                  type="text"
+                  value={authForm.username}
+                  onChange={(e) => setAuthForm(prev => ({ ...prev, username: e.target.value }))}
+                  required
+                />
+              </div>
+              
+              {authMode === 'register' && (
+                <div className="form-group">
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    value={authForm.email}
+                    onChange={(e) => setAuthForm(prev => ({ ...prev, email: e.target.value }))}
+                    required
+                  />
+                </div>
+              )}
+              
+              <div className="form-group">
+                <label>Password</label>
+                <input
+                  type="password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm(prev => ({ ...prev, password: e.target.value }))}
+                  required
+                />
+              </div>
+              
+              <button type="submit" className="submit-btn" disabled={loading}>
+                {loading ? 'Processing...' : (authMode === 'login' ? 'Login' : 'Create Account')}
+              </button>
+              
+              <p className="auth-switch">
+                {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
+                <button 
+                  type="button" 
+                  onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} 
+                  className="link-btn"
+                >
+                  {authMode === 'login' ? 'Sign up' : 'Log in'}
+                </button>
+              </p>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="footer">
@@ -681,11 +797,4 @@ function App() {
   );
 }
 
-// Wrap App with AuthProvider
-const AppWithAuth = () => (
-  <AuthProvider>
-    <App />
-  </AuthProvider>
-);
-
-export default AppWithAuth;
+export default App;
