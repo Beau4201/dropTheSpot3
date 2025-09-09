@@ -86,7 +86,7 @@ class Spot(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str
     description: str
-    photo: str
+    photo: Optional[str] = None  # base64 encoded image - now optional
     latitude: float
     longitude: float
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
